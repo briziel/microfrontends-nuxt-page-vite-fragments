@@ -1,0 +1,1 @@
+# microfrontends-nuxt-page-vite-fragments
