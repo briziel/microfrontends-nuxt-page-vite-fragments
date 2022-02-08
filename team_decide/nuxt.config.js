@@ -32,7 +32,7 @@ export default {
   ],
 
   server: {
-    host: "tchibo.dev.localhost",
+    host: "nuxt-vite.dev.localhost",
     port: 4001
   },
 
