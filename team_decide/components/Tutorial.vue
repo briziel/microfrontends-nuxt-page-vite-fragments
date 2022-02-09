@@ -1,10 +1,17 @@
 <!-- Please remove this file from your project -->
-<template>
-<div>
-<h1>MEEP!</h1>
+<template comments>
   <div
     class="relative flex items-top justify-center min-h-screen bg-gray-100 sm:items-center sm:pt-0"
   >
+    <div>
+      <h1>Fragment</h1>
+      <inspire-fragment>
+        <template shadowroot="open">
+          <slot></slot>
+        </template>
+        <!--#include virtual="/inspire/fragment" -->
+      </inspire-fragment>
+    </div>
     <link
       href="https://cdn.jsdelivr.net/npm/tailwindcss@2.1.2/dist/tailwind.min.css"
       rel="stylesheet"
@@ -114,7 +121,6 @@
         ></a>
       </div>
     </div>
-  </div>
   </div>
 </template>
 

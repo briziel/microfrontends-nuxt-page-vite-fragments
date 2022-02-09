@@ -1,62 +1,104 @@
-const fs = require('fs')
-const path = require('path')
-const express = require('express')
-const { createServer: createViteServer } = require('vite')
+// @ts-check
+const fs = require("fs");
+const path = require("path");
+const express = require("express");
 
-async function createServer() {
-  const app = express()
+const isTest = process.env.NODE_ENV === "test" || !!process.env.VITE_TEST_BUILD;
 
-  // Create Vite server in middleware mode. This disables Vite's own HTML
-  // serving logic and let the parent server take control.
-  //
-  // In middleware mode, if you want to use Vite's own HTML serving logic
-  // use `'html'` as the `middlewareMode` (ref https://vitejs.dev/config/#server-middlewaremode)
-  const vite = await createViteServer({
-    server: { middlewareMode: 'ssr' }
-  })
-  // use vite's connect instance as middleware
-  app.use(vite.middlewares)
+async function createServer(
+  root = process.cwd(),
+  isProd = process.env.NODE_ENV === "production"
+) {
+  const resolve = (p) => path.resolve(__dirname, p);
 
-  app.use('*', async (req, res) => {
-    const url = req.originalUrl
-  
+  const indexProd = isProd
+    ? fs.readFileSync(resolve("dist/client/index.html"), "utf-8")
+    : "";
+
+  const fragmentProd = isProd
+    ? fs.readFileSync(resolve("dist/client/fragment.html"), "utf-8")
+    : "";
+
+  const manifest = isProd
+    ? // @ts-ignore
+      require("./dist/client/ssr-manifest.json")
+    : {};
+
+  const app = express();
+
+  /**
+   * @type {import('vite').ViteDevServer}
+   */
+  let vite;
+  if (!isProd) {
+    vite = await require("vite").createServer({
+      root,
+      logLevel: isTest ? "error" : "info",
+      server: {
+        middlewareMode: "ssr",
+        watch: {
+          // During tests we edit the files too fast and sometimes chokidar
+          // misses change events, so enforce polling for consistency
+          usePolling: true,
+          interval: 100,
+        },
+      },
+    });
+    // use vite's connect instance as middleware
+    app.use(vite.middlewares);
+  } else {
+    app.use(require("compression")());
+    app.use(
+      require("serve-static")(resolve("dist/client"), {
+        index: false,
+      })
+    );
+  }
+
+  app.use("*", async (req, res) => {
+    const isFragment = req.originalUrl && req.originalUrl.includes("/fragment");
+
     try {
-      // 1. Read index.html
-      let template = fs.readFileSync(
-        path.resolve(__dirname, 'index.html'),
-        'utf-8'
-      )
-  
-      // 2. Apply Vite HTML transforms. This injects the Vite HMR client, and
-      //    also applies HTML transforms from Vite plugins, e.g. global preambles
-      //    from @vitejs/plugin-react
-      template = await vite.transformIndexHtml(url, template)
-  
-      // 3. Load the server entry. vite.ssrLoadModule automatically transforms
-      //    your ESM source code to be usable in Node.js! There is no bundling
-      //    required, and provides efficient invalidation similar to HMR.
-      const { render } = await vite.ssrLoadModule('/src/entry-server.js')
-  
-      // 4. render the app HTML. This assumes entry-server.js's exported `render`
-      //    function calls appropriate framework SSR APIs,
-      //    e.g. ReactDOMServer.renderToString()
-      const appHtml = await render(url)
-  
-      // 5. Inject the app-rendered HTML into the template.
-      const html = template.replace(`<!--ssr-outlet-->`, appHtml)
-  
-      // 6. Send the rendered HTML back.
-      res.status(200).set({ 'Content-Type': 'text/html' }).end(html)
-    } catch (e) {
-      // If an error is caught, let Vite fix the stracktrace so it maps back to
-      // your actual source code.
-      vite.ssrFixStacktrace(e)
-      console.error(e)
-      res.status(500).end(e.message)
-    }
-  })
+      const url = req.originalUrl;
 
-  app.listen(4002)
+      let template, render;
+      if (!isProd) {
+        // always read fresh template in dev
+        template = fs.readFileSync(
+          resolve(isFragment ? "fragment.html" : "index.html"),
+          "utf-8"
+        );
+        template = await vite.transformIndexHtml(url, template);
+        render = (await vite.ssrLoadModule("/src/entry-server.js")).render;
+      } else {
+        template = isFragment ? fragmentProd : indexProd;
+        render = require("./dist/server/entry-server.js").render;
+      }
+
+      const [appHtml, preloadLinks] = await render(url, manifest);
+
+      const html = template
+        .replace(`<!--preload-links-->`, preloadLinks)
+        .replace(`<!--app-html-->`, appHtml);
+
+      res.status(200).set({ "Content-Type": "text/html" }).end(html);
+    } catch (e) {
+      vite && vite.ssrFixStacktrace(e);
+      console.log(e.stack);
+      res.status(500).end(e.stack);
+    }
+  });
+
+  return { app, vite };
 }
 
-createServer()
+if (!isTest) {
+  createServer().then(({ app }) =>
+    app.listen(4002, () => {
+      console.log("http://localhost:4002");
+    })
+  );
+}
+
+// for test use
+exports.createServer = createServer;
